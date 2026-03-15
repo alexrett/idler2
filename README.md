@@ -12,7 +12,9 @@ A tiny macOS menu bar app that keeps your Mac awake. One click to prevent sleep 
 
 ## Why?
 
-Your Mac goes to sleep at the worst times — during a deployment, a large download, a database migration, or when you just walked away for coffee while tests are running. Idler sits in your menu bar and prevents that with one click.
+Corporate-managed Macs often enforce aggressive sleep policies that you can't override in System Settings. Your screen locks after a few minutes, your Slack/Teams status flips to "Away", and colleagues think you disappeared — even though you just stepped out for coffee while a build is running.
+
+You could use `caffeinate` in the terminal, but that's easy to forget and annoying to manage. Idler is simpler — one click in the menu bar, and your Mac stays awake. Your messenger stays green, your screen stays on, and your long-running processes don't get interrupted.
 
 ## How It Works
 
