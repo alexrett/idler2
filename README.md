@@ -3,11 +3,9 @@
 A tiny macOS menu bar app that keeps your Mac awake. One click to prevent sleep — no more interrupted downloads, builds, or long-running processes.
 
 <p align="center">
-  <img src="screenshots/menubar.png" width="280" alt="Idler in menu bar">
-  &nbsp;&nbsp;
-  <img src="screenshots/sleep-allowed.png" width="220" alt="Sleep allowed">
-  &nbsp;&nbsp;
-  <img src="screenshots/sleep-prevented.png" width="220" alt="Sleep prevented">
+  <img src="screenshots/sleep-allowed.png" width="240" alt="Sleep allowed">
+  &nbsp;&nbsp;&nbsp;
+  <img src="screenshots/sleep-prevented.png" width="240" alt="Sleep prevented">
 </p>
 
 ## Why?
