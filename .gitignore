@@ -2,3 +2,4 @@
 .build/
 Idler.app/
 *.dmg
+.env.local
