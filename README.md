@@ -35,6 +35,12 @@ When deactivated, all assertions are released and your Mac sleeps normally.
 
 ## Install
 
+### Homebrew
+
+```bash
+brew install --cask alexrett/tap/idler
+```
+
 ### Download
 
 Grab the latest `Idler.dmg` from [Releases](https://github.com/alexrett/idler2/releases).
