@@ -10,19 +10,35 @@ class SleepBlocker: NSObject, ObservableObject {
     private var systemAssertionID: IOPMAssertionID = 0
     private var displayAssertionID: IOPMAssertionID = 0
     private var timer: Timer?
+    private var wasActiveBeforeLock: Bool = false
 
     override init() {
         super.init()
-        DistributedNotificationCenter.default().addObserver(
+        let dnc = DistributedNotificationCenter.default()
+        dnc.addObserver(
             self,
             selector: #selector(screenDidLock),
             name: NSNotification.Name("com.apple.screenIsLocked"),
             object: nil
         )
+        dnc.addObserver(
+            self,
+            selector: #selector(screenDidUnlock),
+            name: NSNotification.Name("com.apple.screenIsUnlocked"),
+            object: nil
+        )
     }
 
     @objc private func screenDidLock() {
+        wasActiveBeforeLock = isActive
         stop()
+    }
+
+    @objc private func screenDidUnlock() {
+        if wasActiveBeforeLock {
+            start()
+            wasActiveBeforeLock = false
+        }
     }
 
     func toggle() {
