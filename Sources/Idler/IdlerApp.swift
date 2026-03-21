@@ -4,12 +4,26 @@ import CoreGraphics
 
 // MARK: - Sleep Blocker
 
-class SleepBlocker: ObservableObject {
+class SleepBlocker: NSObject, ObservableObject {
     @Published var isActive: Bool = false
 
     private var systemAssertionID: IOPMAssertionID = 0
     private var displayAssertionID: IOPMAssertionID = 0
     private var timer: Timer?
+
+    override init() {
+        super.init()
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(screenDidLock),
+            name: NSNotification.Name("com.apple.screenIsLocked"),
+            object: nil
+        )
+    }
+
+    @objc private func screenDidLock() {
+        stop()
+    }
 
     func toggle() {
         if isActive {
@@ -105,6 +119,7 @@ class SleepBlocker: ObservableObject {
     }
 
     deinit {
+        DistributedNotificationCenter.default().removeObserver(self)
         stop()
     }
 }
