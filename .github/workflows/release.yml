@@ -1,0 +1,291 @@
+name: release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+    paths-ignore:
+      - 'README.md'
+      - '**/*.md'
+      - 'LICENSE'
+      - 'screenshots/**'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (with or without leading v). Leave blank to auto-bump patch from latest release tag.'
+        required: false
+        default: ''
+      publish:
+        description: 'Sign + notarize, create tag, publish GitHub Release, update brew tap.'
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    name: resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      tag: ${{ steps.compute.outputs.tag }}
+      release: ${{ steps.compute.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute version + release flag
+        id: compute
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          HEAD_MSG: ${{ github.event.head_commit.message }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          strip_v() {
+            local s="$1"
+            while [[ "$s" == v* ]]; do s="${s#v}"; done
+            echo "$s"
+          }
+
+          validate() {
+            if [[ ! "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Invalid version: '$1' (must be X.Y.Z[-suffix][+build])" >&2
+              exit 1
+            fi
+          }
+
+          last_tag() {
+            gh release view --repo "${GITHUB_REPOSITORY}" --json tagName -q .tagName 2>/dev/null \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true
+          }
+
+          bump_patch() {
+            local base="$1"
+            IFS=. read -r maj min pat <<<"$base"
+            echo "${maj}.${min}.$((pat + 1))"
+          }
+
+          release=false
+          version=""
+
+          case "$EVENT_NAME" in
+            push)
+              if [[ "$REF_TYPE" == "tag" ]]; then
+                version="$(strip_v "$REF_NAME")"
+                release=true
+              else
+                if [[ "$HEAD_MSG" == *"[skip release]"* || "$HEAD_MSG" == *"[no release]"* ]]; then
+                  echo "Skip marker found in head commit — building without releasing."
+                  base="$(last_tag)"
+                  base="${base#v}"
+                  version="${base:-0.0.0}-dev.${GITHUB_SHA::7}"
+                  release=false
+                else
+                  base="$(last_tag)"
+                  if [[ -z "$base" ]]; then
+                    version="0.1.0"
+                  else
+                    version="$(bump_patch "${base#v}")"
+                  fi
+                  release=true
+                fi
+              fi
+              ;;
+            workflow_dispatch)
+              if [[ -z "$INPUT_VERSION" ]]; then
+                base="$(last_tag)"
+                if [[ -z "$base" ]]; then
+                  version="0.1.0"
+                else
+                  version="$(bump_patch "${base#v}")"
+                fi
+              else
+                version="$(strip_v "$INPUT_VERSION")"
+              fi
+              release="$INPUT_PUBLISH"
+              ;;
+            *)
+              echo "Unsupported event: $EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
+
+          validate "$version"
+
+          tag="v${version}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "Resolved version=$version tag=$tag release=$release"
+
+  build:
+    name: build macOS universal dmg
+    needs: resolve
+    runs-on: macos-14
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+      APP_NAME: Idler
+      BUNDLE_ID: com.malikov.idler
+      MIN_OS: "13.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Build universal binary
+        run: swift build -c release --arch arm64 --arch x86_64
+
+      - name: Assemble .app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="${APP_NAME}.app"
+          BIN=".build/apple/Products/Release/${APP_NAME}"
+          rm -rf "${APP}"
+          mkdir -p "${APP}/Contents/MacOS" "${APP}/Contents/Resources"
+          cp "${BIN}" "${APP}/Contents/MacOS/"
+          [ -f AppIcon.icns ] && cp AppIcon.icns "${APP}/Contents/Resources/"
+          cat > "${APP}/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key><string>${APP_NAME}</string>
+              <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
+              <key>CFBundleName</key><string>${APP_NAME}</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+              <key>CFBundleVersion</key><string>${VERSION}</string>
+              <key>CFBundleIconFile</key><string>AppIcon</string>
+              <key>LSUIElement</key><true/>
+              <key>LSMinimumSystemVersion</key><string>${MIN_OS}</string>
+              <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Import macOS signing certificate
+        if: needs.resolve.outputs.release == 'true'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          p12-password: ${{ secrets.MACOS_CERT_PASSWORD }}
+          keychain-password: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+
+      - name: Sign .app
+        if: needs.resolve.outputs.release == 'true'
+        env:
+          MACOS_DEVELOPER_ID_APPLICATION: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION }}
+        run: ./scripts/sign-app.sh "${APP_NAME}.app"
+
+      - name: Create .dmg
+        shell: bash
+        run: |
+          set -euo pipefail
+          DMG="${APP_NAME}-${VERSION}.dmg"
+          rm -f "${DMG}"
+          STAGING="$(mktemp -d)"
+          cp -R "${APP_NAME}.app" "${STAGING}/"
+          ln -s /Applications "${STAGING}/Applications"
+          hdiutil create -volname "${APP_NAME}" -srcfolder "${STAGING}" -ov -format UDZO "${DMG}"
+          rm -rf "${STAGING}"
+
+      - name: Notarize + staple .dmg
+        if: needs.resolve.outputs.release == 'true'
+        env:
+          MACOS_DEVELOPER_ID_APPLICATION: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: ./scripts/notarize-dmg.sh "${APP_NAME}-${VERSION}.dmg"
+
+      - name: Compute checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          mv "${APP_NAME}-${VERSION}.dmg" dist/
+          cd dist
+          shasum -a 256 "${APP_NAME}-${VERSION}.dmg" > "${APP_NAME}-${VERSION}.dmg.sha256"
+          ls -la
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-${{ needs.resolve.outputs.version }}-dmg
+          path: dist/*
+          retention-days: 7
+
+  release:
+    name: publish release + update brew tap
+    needs: [resolve, build]
+    if: needs.resolve.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+      TAG_NAME: ${{ needs.resolve.outputs.tag }}
+      APP_NAME: Idler
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create and push tag (non-tag refs)
+        if: github.ref_type != 'tag'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --tags --exit-code origin "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
+            echo "Tag ${TAG_NAME} already exists on origin — refusing to overwrite." >&2
+            exit 1
+          fi
+          git tag "${TAG_NAME}"
+          git push origin "${TAG_NAME}"
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts and build checksums.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find artifacts -mindepth 2 -type f \( -name '*.dmg' -o -name '*.sha256' \) -exec cp {} dist/ \;
+          cd dist
+          sha256sum ${APP_NAME}-*.dmg > checksums.txt
+          ls -la
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          files: |
+            dist/${{ env.APP_NAME }}-*.dmg
+            dist/checksums.txt
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+      - name: Update Homebrew tap
+        shell: bash
+        env:
+          ARTIFACTS_DIR: ${{ github.workspace }}/dist
+          TAP_REPO: dmtrkzntsv/homebrew-tap
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: ./scripts/update-brew-cask.sh
