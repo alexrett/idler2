@@ -38,19 +38,19 @@ When deactivated, all assertions are released and your Mac sleeps normally.
 ### Homebrew
 
 ```bash
-brew install --cask alexrett/tap/idler
+brew install --cask dmtrkzntsv/tap/idler
 ```
 
 ### Download
 
-Grab the latest `Idler.dmg` from [Releases](https://github.com/alexrett/idler2/releases).
+Grab the latest `Idler-X.Y.Z.dmg` from [Releases](https://github.com/dmtrkzntsv/idler2/releases).
 
 Signed and notarized with Apple Developer ID.
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/alexrett/idler2.git
+git clone https://github.com/dmtrkzntsv/idler2.git
 cd idler2
 swift build -c release
 open .build/release/Idler
